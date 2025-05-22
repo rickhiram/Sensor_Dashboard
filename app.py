@@ -30,97 +30,189 @@ def init_serial():
     """Initialize serial connection with Arduino"""
     global serial_connection, SERIAL_PORT
 
-    print("\nSearching for available serial ports...")
-    os.system('ls -l /dev/serial*')
-    os.system('ls -l /dev/tty*')
+    print("\n[INFO] Initializing serial connection...")
+    print("[INFO] Searching for available serial ports...")
+    # Optional: Keep these for debugging if needed, but can be noisy.
+    # os.system('ls -l /dev/serial*')
+    # os.system('ls -l /dev/tty*')
 
     for port in POSSIBLE_PORTS:
+        print(f"\n[INFO] Processing port: {port}")
         try:
-            print(f"\nTrying port: {port}")
-
+            print(f"[INFO] Checking existence of port: {port}")
             if not os.path.exists(port):
-                print(f"Port {port} does not exist, skipping...")
+                print(f"[WARN] Port {port} does not exist, skipping...")
                 continue
+            print(f"[INFO] Port {port} exists.")
 
-            print(f"Port exists, checking permissions...")
+            print(f"[INFO] Checking permissions for port: {port}")
             if not os.access(port, os.R_OK | os.W_OK):
-                print(f"No permission to access {port}")
-                print("Current permissions:")
-                os.system(f'ls -l {port}')
+                print(f"[WARN] No read/write permission for {port}. Current permissions:")
+                os.system(f'ls -l {port}') # Log current permissions
                 continue
+            print(f"[INFO] Read/write permissions confirmed for port: {port}")
 
-            print("Attempting to open port...")
-            # Try different serial configurations
-            for flow_control in [(True, True), (False, False)]:
+            # Try different serial configurations (flow control)
+            for flow_control_setting in [(True, True), (False, False)]:
+                dsrdtr_val, rtscts_val = flow_control_setting
+                print(f"[INFO] Attempting to open port {port} with DSR/DTR={dsrdtr_val}, RTS/CTS={rtscts_val}")
                 try:
-                    dsrdtr, rtscts = flow_control
                     serial_connection = serial.Serial(
                         port=port,
                         baudrate=BAUD_RATE,
                         timeout=1,
-                        dsrdtr=dsrdtr,
-                        rtscts=rtscts
+                        dsrdtr=dsrdtr_val,
+                        rtscts=rtscts_val
                     )
+                    print(f"[SUCCESS] Successfully opened port {port} with DSR/DTR={dsrdtr_val}, RTS/CTS={rtscts_val}")
 
-                    # Try reading some data
-                    print("Port opened, waiting for data...")
-                    for _ in range(3):  # Try reading 3 times
-                        if serial_connection.in_waiting:
-                            data = serial_connection.readline().decode('utf-8').strip()
-                            print(f"Data received: {data}")
-                            SERIAL_PORT = port
-                            print(f"\nSuccessfully connected to {port}")
-                            print(f"Port settings: {serial_connection.get_settings()}")
-                            return True
+                    print(f"[INFO] Attempting to read data from {port} for verification...")
+                    data_received_successfully = False
+                    for attempt in range(3): # Try reading 3 times
+                        print(f"[INFO] Read attempt {attempt + 1}/3 for port {port}")
+                        try:
+                            if serial_connection.in_waiting:
+                                line = serial_connection.readline().decode('utf-8').strip()
+                                if line:
+                                    print(f"[SUCCESS] Data received from {port}: {line}")
+                                    SERIAL_PORT = port
+                                    print(f"\n[SUCCESS] Successfully connected to {SERIAL_PORT}")
+                                    print(f"[INFO] Port settings: {serial_connection.get_settings()}")
+                                    data_received_successfully = True
+                                    return True # Connection successful
+                                else:
+                                    print(f"[INFO] Empty line received from {port}.")
+                            else:
+                                print(f"[INFO] No data in buffer for {port}, waiting 1 second...")
+                        except serial.SerialException as se:
+                            print(f"[ERROR] SerialException during read attempt on {port}: {se}")
+                            break # Stop trying to read from this port config
+                        except IOError as ioe:
+                            print(f"[ERROR] IOError during read attempt on {port}: {ioe}")
+                            break # Stop trying to read from this port config
+                        except Exception as e_read:
+                            print(f"[ERROR] Unexpected error during read attempt on {port}: {e_read}")
+                            break # Stop trying to read from this port config
                         time.sleep(1)
 
-                    print("No data received, trying next configuration...")
-                    serial_connection.close()
+                    if not data_received_successfully:
+                        print(f"[WARN] No data received from {port} with DSR/DTR={dsrdtr_val}, RTS/CTS={rtscts_val}. Closing port.")
+                        if serial_connection and serial_connection.is_open:
+                            serial_connection.close()
+                        # Continue to next flow control setting
 
-                except Exception as e:
-                    print(f"Failed with flow control {flow_control}: {e}")
-                    if serial_connection:
+                except serial.SerialException as se:
+                    print(f"[ERROR] SerialException when trying to open {port} with DSR/DTR={dsrdtr_val}, RTS/CTS={rtscts_val}: {se}")
+                    if serial_connection and serial_connection.is_open:
                         serial_connection.close()
+                except PermissionError as pe:
+                    print(f"[ERROR] PermissionError when trying to open {port}: {pe}. This should have been caught by os.access, but good to double check.")
+                    # os.system(f'ls -l {port}') # Re-log permissions if this happens
+                except IOError as ioe:
+                    print(f"[ERROR] IOError when trying to open or configure {port}: {ioe}")
+                    if serial_connection and serial_connection.is_open:
+                        serial_connection.close()
+                except Exception as e_open:
+                    print(f"[ERROR] Unexpected error when trying to open {port} with DSR/DTR={dsrdtr_val}, RTS/CTS={rtscts_val}: {e_open}")
+                    if serial_connection and serial_connection.is_open:
+                        serial_connection.close()
+        except Exception as e_port_loop:
+            # This catches errors in the outer loop (e.g. os.path.exists or os.access if they raise something unexpected)
+            print(f"[ERROR] Unexpected error while processing port {port}: {e_port_loop}")
 
-        except Exception as e:
-            print(f"Error with port {port}: {e}")
-
-    print("\nFailed to connect to any serial port")
-    print("Please check:")
-    print("1. Arduino is properly connected")
-    print("2. Correct port permissions (try: sudo chmod 666 /dev/ttyAMA10)")
-    print("3. Serial communication is enabled on the Pi (raspi-config)")
+    print("\n[CRITICAL] Failed to connect to any serial port after trying all configurations.")
+    print("[INFO] Please check the following:")
+    print("1. Arduino/Device is properly connected via USB or GPIO.")
+    print("2. The correct serial port is listed in POSSIBLE_PORTS in app.py.")
+    print("3. Device has necessary permissions (e.g., 'sudo chmod a+rw /dev/ttyAMA10' or add user to 'dialout' group).")
+    print("4. Serial communication is enabled on the Raspberry Pi (if applicable, via raspi-config).")
+    print("5. The device is powered on and sending data.")
     return False
 
 def read_serial_data():
-    """Read and parse data from Arduino"""
+    """Read and parse data from Arduino. Hardened for robustness."""
     global serial_connection
+    line_content = None  # Initialize to None, so it's defined in case of early error
+
     try:
         if serial_connection and serial_connection.is_open:
-            if serial_connection.in_waiting:
-                print("Data available on serial port...")
-                line = serial_connection.readline().decode('utf-8').strip()
-                print(f"Raw data received: {line}")
+            if serial_connection.in_waiting > 0: # Check if there's actually data
+                # print("[DEBUG] Data available on serial port...") # Can be verbose
+                line_bytes = serial_connection.readline() # Can raise SerialException
+                
                 try:
-                    # Remove angle brackets and get the content
-                    if line.startswith('<') and '>' in line:
-                        line = line[1:line.index('>')]
-                        print(f"Data after removing brackets: {line}")
+                    line_content = line_bytes.decode('utf-8').strip() # Can raise UnicodeDecodeError
+                    # print(f"[DEBUG] Raw data received: '{line_content}'") # Can be verbose
+                except UnicodeDecodeError as ude:
+                    print(f"[ERROR] UnicodeDecodeError while decoding data: {type(ude).__name__} - {str(ude)}. Raw bytes: {line_bytes!r}")
+                    return # Skip this problematic line, let the loop continue
+
+                if not line_content: # If line is empty after strip, nothing to process
+                    # print("[DEBUG] Empty line received or failed to decode, skipping further processing.")
+                    return
+
+                # Proceed with parsing and storing
+                processed_line = line_content
+                json_str = "" # Initialize json_str
+                try:
+                    # Remove angle brackets (if present)
+                    if processed_line.startswith('<') and '>' in processed_line:
+                        end_bracket_index = processed_line.index('>')
+                        # Basic check to avoid issues with malformed strings like "<>"
+                        if end_bracket_index > 0 : # Ensure there's content within brackets
+                            processed_line = processed_line[1:end_bracket_index]
+                            # print(f"[DEBUG] Data after removing brackets: '{processed_line}'")
+                        else:
+                            # print(f"[WARN] Malformed bracket structure (e.g., '<>') in line: '{line_content}'. Using content as is.")
+                            # No change to processed_line, or could decide to return if this is critical
+                            pass
+
 
                     # Remove checksum (everything after and including *)
-                    json_str = line.split('*')[0]
-                    print(f"Data after removing checksum: {json_str}")
+                    checksum_index = processed_line.find('*')
+                    if checksum_index != -1:
+                        json_str = processed_line[:checksum_index]
+                    else:
+                        json_str = processed_line # No checksum found
+                    # print(f"[DEBUG] Data after removing checksum (if any): '{json_str}'")
 
-                    data = json.loads(json_str)
-                    print(f"Parsed JSON data: {data}")
+                    if not json_str.strip(): # Check if json_str is empty or just whitespace
+                        print(f"[WARN] JSON string is empty after pre-processing. Original line: '{line_content}'")
+                        return
 
-                    # Store readings in database
-                    store_sensor_readings(data)
-                    print("Data successfully stored in database")
-                except (json.JSONDecodeError, IndexError) as e:
-                    print(f"Error parsing data: {line} - {str(e)}")
-    except Exception as e:
-        print(f"Error reading serial data: {e}")
+                    data = json.loads(json_str) # Can raise json.JSONDecodeError
+                    # print(f"[DEBUG] Parsed JSON data: {data}")
+
+                    store_sensor_readings(data) # Can raise various exceptions if db interaction fails
+                    print(f"[SUCCESS] Data processed and stored successfully from line: '{line_content}'")
+
+                except json.JSONDecodeError as e_json:
+                    print(f"[ERROR] JSONDecodeError parsing data: {type(e_json).__name__} - {str(e_json)}. Problematic JSON string: '{json_str}'. Original line: '{line_content}'")
+                except IndexError as e_index: # If string manipulation (like split or indexing) goes wrong
+                    print(f"[ERROR] IndexError during data processing: {type(e_index).__name__} - {str(e_index)}. Original line: '{line_content}'")
+                except Exception as e_parse_store: # Catch any other errors during parsing/storing
+                    print(f"[ERROR] Unexpected error processing/storing data: {type(e_parse_store).__name__} - {str(e_parse_store)}. Original line: '{line_content}'")
+            # else:
+                # print("[DEBUG] No data in_waiting on serial port.") 
+        # else:
+            # if not serial_connection:
+            #     print("[WARN] read_serial_data: serial_connection is None. Thread will likely stop if not re-initialized.")
+            # elif not serial_connection.is_open:
+            #     print("[WARN] read_serial_data: serial_connection is not open. Waiting for it to be re-opened.")
+
+    except serial.SerialException as se:
+        print(f"[ERROR] SerialException in read_serial_data (e.g., device disconnected): {type(se).__name__} - {str(se)}. Port: {SERIAL_PORT}")
+        # The loop in start_serial_thread will continue to call this function.
+        # If the port is disconnected, serial_connection.is_open might become false,
+        # or in_waiting/readline will consistently fail. Consider closing and setting serial_connection to None
+        # if this error implies the connection is permanently lost, to allow re-initialization.
+        # For now, just logging and returning. If serial_connection.is_open becomes False, the outer 'if' will prevent further action.
+        # If serial_connection.readline() fails repeatedly, init_serial() might need to be called again by a higher level logic.
+    except IOError as ioe: # For other I/O errors not covered by SerialException
+        print(f"[ERROR] IOError in read_serial_data: {type(ioe).__name__} - {str(ioe)}. Raw line (if available): '{line_content}'")
+    except Exception as e_outer:
+        # This is a general catch-all for unexpected errors in the function.
+        print(f"[ERROR] An unexpected error occurred in read_serial_data: {type(e_outer).__name__} - {str(e_outer)}. Raw line (if available): '{line_content}'")
 
 def store_sensor_readings(data):
     """Store sensor readings in the database"""
@@ -424,6 +516,6 @@ if __name__ == '__main__':
     # Only run this once (avoids double-thread issue)
     if os.environ.get("WERKZEUG_RUN_MAIN") == "true":
         init_db()
-        init_serial()
+        start_serial_thread() # init_serial() is called within start_serial_thread
         # Run on all network interfaces, port 5000
         app.run(host='0.0.0.0', port=5000, debug=True)
