@@ -9,7 +9,7 @@ import serial
 import json
 import os
 
-app = Flask(__name__, static_url_path='', static_folder='static')
+app = Flask(__name__, static_folder='static', template_folder='templates')
 CORS(app)  # Enable CORS for all routes
 
 # Serial Port Configuration (Change as needed)
