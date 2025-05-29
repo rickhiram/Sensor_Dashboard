@@ -1,0 +1,18 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+env/
+venv/
+.env
+
+# Build artifacts
+dist/
+build/
+*.egg-info/
+
+# Application specific
+dashboard/logs/
+dashboard/data/
