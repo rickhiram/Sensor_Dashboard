@@ -646,3 +646,4 @@ if __name__ == '__main__':
             app.run(host='0.0.0.0', port=5000, debug=True)
         except Exception as e:
             logger.critical(f"Critical error during application startup: {e}", exc_info=True)
+
